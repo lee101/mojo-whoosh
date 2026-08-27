@@ -1,14 +1,11 @@
 """Sorted posting-list, scoring, and ranking kernels exposed through a C ABI."""
 
-from std.algorithm.functional import parallelize
 from std.math import log
 from std.sys import simd_width_of
 
 comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
-comptime BM25_PARALLEL_THRESHOLD = 4_194_304
-comptime BM25_CHUNK_SIZE = 65_536
 
 
 def _worse(score_a: Float64, doc_a: Int64, score_b: Float64, doc_b: Int64) -> Bool:
@@ -203,40 +200,18 @@ def mw_bm25_scores(
     var idf = log(Float64(ndocs) / denom_docs) + 1.0
     var safe_avg = avg_length if avg_length > 0.0 else 1.0
     var scale = boost * idf * (k1 + 1.0)
-    if npost >= BM25_PARALLEL_THRESHOLD:
-        var chunks = (npost + BM25_CHUNK_SIZE - 1) // BM25_CHUNK_SIZE
-
-        @parameter
-        def score_chunk(chunk: Int):
-            var start = chunk * BM25_CHUNK_SIZE
-            var stop = min(start + BM25_CHUNK_SIZE, npost)
-            _bm25_scores_range(
-                docs,
-                freqs,
-                lengths,
-                dst,
-                start,
-                stop,
-                safe_avg,
-                b_param,
-                k1,
-                scale,
-            )
-
-        parallelize[score_chunk](chunks, min(chunks, 4))
-    else:
-        _bm25_scores_range(
-            docs,
-            freqs,
-            lengths,
-            dst,
-            0,
-            npost,
-            safe_avg,
-            b_param,
-            k1,
-            scale,
-        )
+    _bm25_scores_range(
+        docs,
+        freqs,
+        lengths,
+        dst,
+        0,
+        npost,
+        safe_avg,
+        b_param,
+        k1,
+        scale,
+    )
 
 
 @export("mw_tfidf_accumulate")
