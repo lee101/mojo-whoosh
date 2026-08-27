@@ -78,6 +78,43 @@ def test_bm25_simd_tail_matches_accumulator():
     assert actual == pytest.approx(expected, rel=1e-12)
 
 
+def test_bm25_top_k_simd_tail_matches_two_pass_ranking():
+    docs = np.arange(19, dtype=np.int64)
+    frequencies = np.array(
+        [1.0, 4.0, 2.0, 3.0, 1.5, 2.5, 5.0, 1.0, 2.0, 3.5,
+         4.5, 1.5, 2.5, 3.0, 1.0, 5.0, 2.0, 4.0, 3.0]
+    )
+    lengths = docs % 7 + 2
+    kwargs = {
+        "avg_length": float(lengths.mean()),
+        "B": 0.6,
+        "K1": 1.4,
+        "boost": 1.3,
+    }
+    scores = kernels.score_bm25(docs, frequencies, lengths, **kwargs)
+    expected_docs, expected_scores = kernels.top_k(docs, scores, 7)
+    actual_docs, actual_scores = kernels.bm25_top_k(
+        docs, frequencies, lengths, 7, **kwargs
+    )
+    assert np.array_equal(actual_docs, expected_docs)
+    np.testing.assert_allclose(actual_scores, expected_scores, rtol=1e-12, atol=0.0)
+
+
+def test_bm25_top_k_limit_edges():
+    docs = np.array([0, 1, 2], dtype=np.int64)
+    frequencies = np.array([1.0, 3.0, 2.0])
+    lengths = np.array([2, 4, 3], dtype=np.int64)
+    empty_docs, empty_scores = kernels.bm25_top_k(
+        docs, frequencies, lengths, 0, avg_length=3.0
+    )
+    assert not empty_docs.size
+    assert not empty_scores.size
+    all_docs, all_scores = kernels.bm25_top_k(
+        docs, frequencies, lengths, 99, avg_length=3.0
+    )
+    assert all_docs.size == all_scores.size == docs.size
+
+
 def test_bm25_parallel_threshold_matches_formula():
     count = kernels.BM25_PARALLEL_THRESHOLD + 1
     docs = np.arange(count, dtype=np.int64)

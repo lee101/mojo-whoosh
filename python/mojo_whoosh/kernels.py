@@ -160,6 +160,72 @@ def score_bm25(
     return values
 
 
+def _bm25_top_k_arrays(
+    docs: np.ndarray,
+    freqs: np.ndarray,
+    lengths: np.ndarray,
+    limit: int,
+    *,
+    avg_length: float,
+    B: float,
+    K1: float,
+    boost: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    k = min(max(limit, 0), docs.size)
+    if not k:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
+    result_docs = np.empty(k, dtype=np.int64)
+    result_scores = np.empty(k, dtype=np.float64)
+    n = lib().mw_bm25_topk(
+        addr(docs),
+        addr(freqs),
+        addr(lengths),
+        docs.size,
+        lengths.size,
+        avg_length,
+        B,
+        K1,
+        boost,
+        k,
+        addr(result_docs),
+        addr(result_scores),
+    )
+    return result_docs[:n], result_scores[:n]
+
+
+def bm25_top_k(
+    docids,
+    frequencies,
+    field_lengths,
+    limit: int,
+    *,
+    avg_length: float,
+    B: float = 0.75,
+    K1: float = 1.2,
+    boost: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Score one term and return its best documents without a dense score buffer."""
+    docs = _i64(docids, "docids")
+    freqs = _f64(frequencies, "frequencies")
+    lengths = _i64(field_lengths, "field_lengths")
+    _aligned(docs, freqs)
+    _validate_docids(docs, lengths.size)
+    try:
+        requested = operator.index(limit)
+    except TypeError as error:
+        raise TypeError("limit must be an integer") from error
+    return _bm25_top_k_arrays(
+        docs,
+        freqs,
+        lengths,
+        requested,
+        avg_length=avg_length,
+        B=B,
+        K1=K1,
+        boost=boost,
+    )
+
+
 def accumulate_tfidf(docids, frequencies, scores, *, boost: float = 1.0):
     docs = _i64(docids, "docids")
     freqs = _f64(frequencies, "frequencies")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import operator
 import time
 from collections import Counter
 from collections.abc import Sequence
@@ -11,6 +12,7 @@ import numpy as np
 
 from . import query, scoring
 from .kernels import (
+    _bm25_top_k_arrays,
     accumulate_bm25,
     accumulate_frequency,
     accumulate_tfidf,
@@ -335,6 +337,23 @@ class Searcher:
             boost=query_object.boost * self.schema[fieldname].field_boost,
         )
 
+    def _top_bm25_term(self, query_object, limit):
+        posting = self._posting(query_object.fieldname, query_object.text)
+        if posting is None:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
+        fieldname = query_object.fieldname
+        model = self._model_for(fieldname)
+        return _bm25_top_k_arrays(
+            posting.docs,
+            posting.frequencies,
+            self.ix._lengths[fieldname],
+            limit,
+            avg_length=self.ix._average_lengths[fieldname],
+            B=model.field_B(fieldname),
+            K1=model.K1,
+            boost=query_object.boost * self.schema[fieldname].field_boost,
+        )
+
     def search(
         self,
         q,
@@ -364,14 +383,25 @@ class Searcher:
             and isinstance(q, query.Term)
             and isinstance(self._model_for(q.fieldname), scoring.BM25F)
         )
-        if direct_bm25:
+        fused_bm25 = direct_bm25 and sortedby is None and limit is not None
+        if fused_bm25:
+            try:
+                requested = operator.index(limit)
+            except TypeError as error:
+                raise TypeError("limit must be an integer") from error
+            docids, result_scores = self._top_bm25_term(q, requested)
+            if reverse:
+                docids, result_scores = docids[::-1], result_scores[::-1]
+        elif direct_bm25:
             aligned = self._score_bm25_term(q)
         elif scored:
             aligned = self._score(q, candidates)[candidates]
         else:
             aligned = np.zeros(candidates.size, dtype=np.float64)
         total = candidates.size
-        if sortedby is not None:
+        if fused_bm25:
+            pass
+        elif sortedby is not None:
             fieldname = str(sortedby)
             order = sorted(
                 range(total),

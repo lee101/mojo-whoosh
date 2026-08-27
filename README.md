@@ -82,17 +82,19 @@ directly with Whoosh's `IntersectionMatcher` and `UnionMatcher`. A ratio above
 
 | Case | mojo-whoosh | Whoosh 2.7.4 | Upstream / Mojo |
 |---|---:|---:|---:|
-| posting intersection (667k x 400k) | 6.376 ms | 129.865 ms | 20.37x faster |
-| posting union (667k x 400k) | 3.976 ms | 1531.671 ms | 385.27x faster |
-| index 50k documents | 3032.536 ms | 14153.553 ms | 4.67x faster |
-| BM25 term query, limit 20 | 0.273 ms | 1.061 ms | 3.89x faster |
-| AND query, limit 20 | 1.039 ms | 258.517 ms | 248.93x faster |
-| OR query, limit 20 | 1.006 ms | 130.698 ms | 129.94x faster |
+| posting intersection (667k x 400k) | 3.950 ms | 92.504 ms | 23.42x faster |
+| posting union (667k x 400k) | 3.806 ms | 1147.513 ms | 301.54x faster |
+| index 50k documents | 1513.942 ms | 10945.099 ms | 7.23x faster |
+| BM25 term query, limit 20 | 0.158 ms | 1.036 ms | 6.58x faster |
+| AND query, limit 20 | 0.599 ms | 132.542 ms | 221.13x faster |
+| OR query, limit 20 | 0.561 ms | 70.518 ms | 125.65x faster |
 
 These are measurements from one machine, not universal claims. Run
 `pixi run bench` on the target machine before making deployment decisions.
 
-No GPU path is included.
+No GPU path is included. The scoring kernels perform roughly 6--10 floating-point
+operations while reading at least 24 bytes per posting, well below the arithmetic
+intensity needed to repay device transfer and launch overhead.
 
 ## How it works
 
@@ -101,9 +103,11 @@ The Mojo compilation unit receives C-contiguous buffers through a C ABI.
 `UnsafePointer[..., AnyOrigin[mut=True]]` inside the exported function.
 Posting document IDs and field lengths are `int64`, while term frequencies
 and scores are `float64`. Sorted two-pointer scans implement Boolean set
-operations. Single-term BM25 uses SIMD frequency loads, indexed field-length
-gathers, contiguous score stores, and a scalar remainder loop. Large inputs
-are split across CPU workers. Multi-term scoring accumulates into a dense
+operations. Limited single-term BM25 queries fuse SIMD scoring and top-K ranking,
+return only the requested results, and use a scalar remainder loop. Full BM25
+score vectors use SIMD frequency loads, indexed field-length gathers, contiguous
+stores, and split inputs of at least 4,194,304 postings across CPU workers.
+Multi-term scoring accumulates into a dense
 document array, and a bounded heap kernel ranks the requested top K with
 deterministic document-ID tie-breaking.
 

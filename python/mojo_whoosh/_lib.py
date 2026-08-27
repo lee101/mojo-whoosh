@@ -20,6 +20,7 @@ _SIGNATURES = {
     "mw_difference": ([I, I, I, I, I], I),
     "mw_bm25_accumulate": ([I, I, I, I, I, F, F, F, F, I], None),
     "mw_bm25_scores": ([I, I, I, I, I, F, F, F, F, I], None),
+    "mw_bm25_topk": ([I, I, I, I, I, F, F, F, F, I, I, I], I),
     "mw_tfidf_accumulate": ([I, I, I, I, F, I], None),
     "mw_frequency_accumulate": ([I, I, I, I, F, I], None),
     "mw_topk": ([I, I, I, I, I, I], I),
