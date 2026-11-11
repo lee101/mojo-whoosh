@@ -1,12 +1,12 @@
 """Sorted posting-list, scoring, and ranking kernels exposed through a C ABI."""
 
-from max.algorithm import parallelize
 from std.math import log
 from std.sys import simd_width_of
 
 comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
+comptime BM25_TASKS = 16
 comptime BM25_PARALLEL_THRESHOLD = 4_194_304
 
 
@@ -86,8 +86,8 @@ def _bm25_scores_range(
 ):
     var simd_stop = stop - (stop - start) % W
     for i in range(start, simd_stop, W):
-        var doc_vec = docs.load[width=W](i)
-        var weights = freqs.load[width=W](i)
+        var doc_vec = docs.unsafe_load[width=W](i)
+        var weights = freqs.unsafe_load[width=W](i)
         var field_lengths = lengths.gather[width=W](doc_vec).cast[DType.float64]()
         var norms = 1.0 - b_param + b_param * field_lengths / safe_avg
         var values = scale * weights / (weights + k1 * norms)
@@ -232,24 +232,10 @@ def mw_bm25_scores(
     var safe_avg = avg_length if avg_length > 0.0 else 1.0
     var scale = boost * idf * (k1 + 1.0)
     if npost >= BM25_PARALLEL_THRESHOLD:
-        var workers = 16
-
-        @parameter
-        @__copy_capture(
-            docs,
-            freqs,
-            lengths,
-            dst,
-            npost,
-            workers,
-            safe_avg,
-            b_param,
-            k1,
-            scale,
-        )
-        def work(worker: Int):
-            var start = npost * worker // workers
-            var stop = npost * (worker + 1) // workers
+        var chunks = BM25_TASKS
+        for worker in range(chunks):
+            var start = npost * worker // chunks
+            var stop = npost * (worker + 1) // chunks
             _bm25_scores_range(
                 docs,
                 freqs,
@@ -262,8 +248,6 @@ def mw_bm25_scores(
                 k1,
                 scale,
             )
-
-        parallelize[work](workers, workers)
     else:
         _bm25_scores_range(
             docs,
@@ -305,8 +289,8 @@ def mw_bm25_topk(
     var used = 0
     var simd_stop = npost - npost % W
     for i in range(0, simd_stop, W):
-        var doc_vec = docs.load[width=W](i)
-        var weights = freqs.load[width=W](i)
+        var doc_vec = docs.unsafe_load[width=W](i)
+        var weights = freqs.unsafe_load[width=W](i)
         var field_lengths = lengths.gather[width=W](doc_vec).cast[DType.float64]()
         var norms = 1.0 - b_param + b_param * field_lengths / safe_avg
         var values = scale * weights / (weights + k1 * norms)
